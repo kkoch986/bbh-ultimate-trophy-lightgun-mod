@@ -57,10 +57,10 @@ def ensure_unitypy():
         import UnityPy
         return UnityPy
     except ImportError:
+        import subprocess
         print("UnityPy not found. Installing into a temporary venv...")
         venv = Path(__file__).parent / ".venv"
         if not venv.exists():
-            import subprocess
             subprocess.check_call([sys.executable, "-m", "venv", str(venv)])
         pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
         subprocess.check_call([str(pip), "install", "UnityPy"])
