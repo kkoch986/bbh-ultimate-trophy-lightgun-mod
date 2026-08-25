@@ -231,8 +231,12 @@ def patch_reticle_bundle(bundle_path: Path):
 def main():
     ensure_unitypy()
 
-    game_dir = find_game_dir()
-    if game_dir is None:
+    if len(sys.argv) > 1:
+        game_dir = Path(sys.argv[1]).expanduser().resolve()
+    else:
+        game_dir = find_game_dir()
+
+    if game_dir is None or not game_dir.is_dir():
         print("ERROR: Cannot find Big Buck Hunter: Ultimate Trophy install directory.")
         print("Tried the following locations:")
         for candidate in candidate_game_dirs():
