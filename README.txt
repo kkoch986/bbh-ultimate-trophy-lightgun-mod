@@ -15,13 +15,26 @@ In the Addressables asset bundles the patch disables:
 Because the visuals are disabled in the prefab, spawned instances will also
 start disabled.
 
+Supported platforms
+-------------------
+- Windows (run from the game folder).
+- Linux Steam install.
+- Batocera Flatpak Steam install.
+
+The script auto-detects the game directory in the common locations. You can
+also run it from inside the game folder.
+
 Install
 -------
-1. Make sure the "BBH_LightGun_Mod" folder is next to BBH.exe.
-2. Open a terminal in the game folder.
+1. Copy the "BBH_LightGun_Mod" folder next to BBH.exe in the game directory.
+2. Open a terminal / SSH session.
 3. Run:
        python BBH_LightGun_Mod/patch.py
    The script will back up the original bundles before patching.
+
+On Batocera you can run from anywhere:
+
+    python /userdata/saves/flatpak/data/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/BigBuckHunter_UltimateTrophy/BBH_LightGun_Mod/patch.py
 
 Uninstall / Revert
 ------------------

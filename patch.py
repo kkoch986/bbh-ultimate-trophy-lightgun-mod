@@ -9,7 +9,8 @@ What it does:
 - Disables each weapon's visual holder and all renderer components under it.
 - Disables the CursorWindow reticle GameObject and its controlling script.
 
-Run from the game root directory (where BBH.exe lives).
+The script auto-detects the game install directory on Windows, Linux and
+Batocera. You can also run it from inside the game folder.
 """
 
 import os
@@ -17,10 +18,38 @@ import sys
 import shutil
 from pathlib import Path
 
-BUNDLE_DIR = Path("BBH_Data/StreamingAssets/aa/StandaloneWindows64")
+GAME_NAME = "BigBuckHunter_UltimateTrophy"
 BACKUP_SUFFIX = ".original"
-
 WEAPON_ROOTS = ["Shotgun2D", "Shotgun", "Crossbow"]
+
+
+def candidate_game_dirs():
+    """Yield possible absolute paths to the game root directory."""
+    # Current working directory
+    yield Path.cwd()
+
+    # Directory containing this script
+    yield Path(__file__).parent
+
+    # Same parent as this script (when mod folder lives next to BBH.exe)
+    yield Path(__file__).parent.parent
+
+    # Standard Linux Steam library
+    home = Path.home()
+    yield home / ".local" / "share" / "Steam" / "steamapps" / "common" / GAME_NAME
+
+    # Batocera Flatpak Steam
+    batocera_base = Path("/userdata/saves/flatpak/data/.var/app/com.valvesoftware.Steam")
+    yield batocera_base / ".local/share/Steam/steamapps/common" / GAME_NAME
+    yield batocera_base / "data/Steam/steamapps/common" / GAME_NAME
+
+
+def find_game_dir():
+    """Return the game root directory, or None if not found."""
+    for candidate in candidate_game_dirs():
+        if (candidate / "BBH.exe").is_file() and (candidate / "BBH_Data").is_dir():
+            return candidate
+    return None
 
 
 def ensure_unitypy():
@@ -100,7 +129,6 @@ def disable_renderers_under(go_obj, by_path):
 
 
 def patch_weapon_bundle(bundle_path: Path):
-    import UnityPy
     env, by_path = load_bundle(bundle_path)
     modified = False
 
@@ -203,13 +231,25 @@ def patch_reticle_bundle(bundle_path: Path):
 def main():
     ensure_unitypy()
 
-    if not BUNDLE_DIR.is_dir():
-        print(f"ERROR: Cannot find bundle directory: {BUNDLE_DIR}")
-        print("Make sure you run this script from the game root.")
+    game_dir = find_game_dir()
+    if game_dir is None:
+        print("ERROR: Cannot find Big Buck Hunter: Ultimate Trophy install directory.")
+        print("Tried the following locations:")
+        for candidate in candidate_game_dirs():
+            print(f"  - {candidate}")
+        print("\nRun this script from the game folder, or pass the path as an argument:")
+        print(f"  python {Path(__file__).name} /path/to/{GAME_NAME}")
         sys.exit(1)
 
-    weapon_bundle = BUNDLE_DIR / "abd4eaaf5ee36d5445d05f049913a21d.bundle"
-    reticle_bundle = BUNDLE_DIR / "4bb9c63b88eb661db8f5d56fe5a64ea1.bundle"
+    print(f"Found game directory: {game_dir}")
+    bundle_dir = game_dir / "BBH_Data" / "StreamingAssets" / "aa" / "StandaloneWindows64"
+
+    if not bundle_dir.is_dir():
+        print(f"ERROR: Cannot find bundle directory: {bundle_dir}")
+        sys.exit(1)
+
+    weapon_bundle = bundle_dir / "abd4eaaf5ee36d5445d05f049913a21d.bundle"
+    reticle_bundle = bundle_dir / "4bb9c63b88eb661db8f5d56fe5a64ea1.bundle"
 
     if weapon_bundle.exists():
         print(f"Patching {weapon_bundle.name}...")
