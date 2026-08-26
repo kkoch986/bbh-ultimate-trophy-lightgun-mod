@@ -21,6 +21,11 @@ from pathlib import Path
 GAME_NAME = "BigBuckHunter_UltimateTrophy"
 BACKUP_SUFFIX = ".original"
 WEAPON_ROOTS = ["Shotgun2D", "Shotgun", "Crossbow"]
+WEAPON_NAME_PATTERNS = {
+    "shotgun", "shotgun2d", "crossbow", "crossbow_rig", "crossbow_bolt",
+    "bolt_blue", "bolt_green", "bolt_orange", "bolt_yellow",
+    "bbh_gun", "bbh_gungreytest", "gun", "muzzle", "barrel",
+}
 
 
 def candidate_game_dirs():
@@ -132,42 +137,68 @@ def patch_weapon_bundle(bundle_path: Path):
     env, by_path = load_bundle(bundle_path)
     modified = False
 
-    # Find weapon root GameObjects by name + MonoBehaviour script name
-    script_names = {"Shotgun2D", "Shotgun", "Crossbow"}
-    weapon_roots = []
+    renderer_types = {"MeshRenderer", "SkinnedMeshRenderer", "SpriteRenderer"}
+
+    # Phase 1: Find all weapon-related GameObjects by name pattern
+    weapon_gos = []
     for obj in env.objects:
         if obj.type.name != "GameObject":
             continue
         name = get_name(obj)
-        if name not in WEAPON_ROOTS:
+        if not name:
             continue
-        # Confirm it has a weapon MonoBehaviour
-        go_data = obj.read()
-        for comp_pair in go_data.m_Component:
-            if comp_pair.component.type.name == "MonoBehaviour":
-                mb = comp_pair.component.read()
-                script = mb.m_Script.read() if mb.m_Script.path_id else None
-                if script and script.m_Name in script_names:
-                    weapon_roots.append((obj, name, mb))
-                    break
+        name_lower = name.lower().strip()
+        if name_lower in WEAPON_NAME_PATTERNS or name in WEAPON_ROOTS:
+            weapon_gos.append((obj, name))
 
-    print(f"  Found {len(weapon_roots)} weapon root(s)")
+    print(f"  Found {len(weapon_gos)} weapon-related GameObject(s)")
 
-    for go_obj, name, mb in weapon_roots:
+    # Phase 2: Disable each weapon GO and all renderers under it
+    for go_obj, name in weapon_gos:
         if disable_gameobject(go_obj, by_path):
-            print(f"  Disabled weapon root '{name}' (path_id={go_obj.path_id})")
+            print(f"  Disabled '{name}' (path_id={go_obj.path_id})")
             modified = True
 
-        visual_pid = getattr(mb, "visualHolder", None)
-        if visual_pid and visual_pid.path_id:
-            vh_obj = by_path.get(visual_pid.path_id)
-            if vh_obj and vh_obj.type.name == "GameObject":
-                if disable_gameobject(vh_obj, by_path):
-                    print(f"  Disabled visual holder '{get_name(vh_obj)}' for '{name}'")
-                    modified = True
-                if disable_renderers_under(vh_obj, by_path):
-                    print(f"  Disabled renderers under visual holder for '{name}'")
-                    modified = True
+        # Disable renderers on this GO and all children
+        for child in [go_obj, *go_children(go_obj, by_path)]:
+            child_data = child.read()
+            for comp_pair in child_data.m_Component:
+                comp_type = comp_pair.component.type.name
+                if comp_type in renderer_types:
+                    rend_obj = by_path.get(comp_pair.component.path_id)
+                    if not rend_obj:
+                        continue
+                    rend = rend_obj.read()
+                    if rend.m_Enabled:
+                        rend.m_Enabled = 0
+                        rend_obj.save_typetree(rend)
+                        child_name = get_name(child)
+                        print(f"  Disabled renderer on '{child_name}' ({comp_type})")
+                        modified = True
+
+    # Phase 3: Also disable any remaining MeshRenderer/SkinnedMeshRenderer
+    # whose parent GO name matches weapon patterns (catches nested parts)
+    for obj in env.objects:
+        if obj.type.name not in renderer_types:
+            continue
+        rend = obj.read()
+        if not rend.m_Enabled:
+            continue
+        # Walk up to find the owning GO
+        go_name = ""
+        try:
+            go_ref = getattr(rend, "m_GameObject", None)
+            if go_ref and go_ref.path_id:
+                go_obj = by_path.get(go_ref.path_id)
+                if go_obj and go_obj.type.name == "GameObject":
+                    go_name = get_name(go_obj).lower()
+        except Exception:
+            pass
+        if go_name in WEAPON_NAME_PATTERNS or go_name in WEAPON_ROOTS:
+            rend.m_Enabled = 0
+            obj.save_typetree(rend)
+            print(f"  Disabled orphan renderer on GO '{go_name}'")
+            modified = True
 
     if not modified:
         print("  Nothing to change.")
