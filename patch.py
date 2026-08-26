@@ -48,6 +48,9 @@ def candidate_game_dirs():
     yield batocera_base / ".local/share/Steam/steamapps/common" / GAME_NAME
     yield batocera_base / "data/Steam/steamapps/common" / GAME_NAME
 
+    # Batocera system Steam (add-ons)
+    yield Path("/userdata/system/add-ons/steam/.local/share/Steam/steamapps/common") / GAME_NAME
+
 
 def find_game_dir():
     """Return the game root directory, or None if not found."""
@@ -259,15 +262,29 @@ def patch_reticle_bundle(bundle_path: Path):
     print(f"  Wrote patched bundle: {bundle_path}")
 
 
+def find_all_game_dirs():
+    """Return all valid game root directories."""
+    seen = set()
+    found = []
+    for candidate in candidate_game_dirs():
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_dir() and (resolved / "BBH.exe").is_file() and (resolved / "BBH_Data").is_dir():
+            found.append(resolved)
+    return found
+
+
 def main():
     ensure_unitypy()
 
     if len(sys.argv) > 1:
-        game_dir = Path(sys.argv[1]).expanduser().resolve()
+        game_dirs = [Path(sys.argv[1]).expanduser().resolve()]
     else:
-        game_dir = find_game_dir()
+        game_dirs = find_all_game_dirs()
 
-    if game_dir is None or not game_dir.is_dir():
+    if not game_dirs:
         print("ERROR: Cannot find Big Buck Hunter: Ultimate Trophy install directory.")
         print("Tried the following locations:")
         for candidate in candidate_game_dirs():
@@ -276,27 +293,28 @@ def main():
         print(f"  python {Path(__file__).name} /path/to/{GAME_NAME}")
         sys.exit(1)
 
-    print(f"Found game directory: {game_dir}")
-    bundle_dir = game_dir / "BBH_Data" / "StreamingAssets" / "aa" / "StandaloneWindows64"
+    for game_dir in game_dirs:
+        print(f"\n=== Patching: {game_dir} ===")
+        bundle_dir = game_dir / "BBH_Data" / "StreamingAssets" / "aa" / "StandaloneWindows64"
 
-    if not bundle_dir.is_dir():
-        print(f"ERROR: Cannot find bundle directory: {bundle_dir}")
-        sys.exit(1)
+        if not bundle_dir.is_dir():
+            print(f"WARNING: Cannot find bundle directory: {bundle_dir}")
+            continue
 
-    weapon_bundle = bundle_dir / "abd4eaaf5ee36d5445d05f049913a21d.bundle"
-    reticle_bundle = bundle_dir / "4bb9c63b88eb661db8f5d56fe5a64ea1.bundle"
+        weapon_bundle = bundle_dir / "abd4eaaf5ee36d5445d05f049913a21d.bundle"
+        reticle_bundle = bundle_dir / "4bb9c63b88eb661db8f5d56fe5a64ea1.bundle"
 
-    if weapon_bundle.exists():
-        print(f"Patching {weapon_bundle.name}...")
-        patch_weapon_bundle(weapon_bundle)
-    else:
-        print(f"WARNING: Weapon bundle not found: {weapon_bundle}")
+        if weapon_bundle.exists():
+            print(f"Patching {weapon_bundle.name}...")
+            patch_weapon_bundle(weapon_bundle)
+        else:
+            print(f"WARNING: Weapon bundle not found: {weapon_bundle}")
 
-    if reticle_bundle.exists():
-        print(f"Patching {reticle_bundle.name}...")
-        patch_reticle_bundle(reticle_bundle)
-    else:
-        print(f"WARNING: Reticle bundle not found: {reticle_bundle}")
+        if reticle_bundle.exists():
+            print(f"Patching {reticle_bundle.name}...")
+            patch_reticle_bundle(reticle_bundle)
+        else:
+            print(f"WARNING: Reticle bundle not found: {reticle_bundle}")
 
     print("\nDone. Original files backed up with suffix '.original'.")
     print("To revert, run: python BBH_LightGun_Mod/revert.py")

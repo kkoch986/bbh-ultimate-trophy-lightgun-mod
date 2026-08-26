@@ -30,21 +30,30 @@ def candidate_game_dirs():
     yield batocera_base / ".local/share/Steam/steamapps/common" / GAME_NAME
     yield batocera_base / "data/Steam/steamapps/common" / GAME_NAME
 
+    yield Path("/userdata/system/add-ons/steam/.local/share/Steam/steamapps/common") / GAME_NAME
 
-def find_game_dir():
+
+def find_all_game_dirs():
+    """Return all valid game root directories."""
+    seen = set()
+    found = []
     for candidate in candidate_game_dirs():
-        if (candidate / "BBH.exe").is_file() and (candidate / "BBH_Data").is_dir():
-            return candidate
-    return None
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_dir() and (resolved / "BBH.exe").is_file() and (resolved / "BBH_Data").is_dir():
+            found.append(resolved)
+    return found
 
 
 def main():
     if len(sys.argv) > 1:
-        game_dir = Path(sys.argv[1]).expanduser().resolve()
+        game_dirs = [Path(sys.argv[1]).expanduser().resolve()]
     else:
-        game_dir = find_game_dir()
+        game_dirs = find_all_game_dirs()
 
-    if game_dir is None or not game_dir.is_dir():
+    if not game_dirs:
         print("ERROR: Cannot find Big Buck Hunter: Ultimate Trophy install directory.")
         print("Tried the following locations:")
         for candidate in candidate_game_dirs():
@@ -53,21 +62,22 @@ def main():
         print(f"  python {Path(__file__).name} /path/to/{GAME_NAME}")
         sys.exit(1)
 
-    print(f"Found game directory: {game_dir}")
-    bundle_dir = game_dir / "BBH_Data" / "StreamingAssets" / "aa" / "StandaloneWindows64"
+    for game_dir in game_dirs:
+        print(f"\n=== Reverting: {game_dir} ===")
+        bundle_dir = game_dir / "BBH_Data" / "StreamingAssets" / "aa" / "StandaloneWindows64"
 
-    if not bundle_dir.is_dir():
-        print(f"ERROR: Cannot find bundle directory: {bundle_dir}")
-        sys.exit(1)
-
-    for filename in BUNDLES:
-        bundle_path = bundle_dir / filename
-        backup_path = bundle_path.with_suffix(bundle_path.suffix + BACKUP_SUFFIX)
-        if not backup_path.exists():
-            print(f"No backup found for {filename}, skipping.")
+        if not bundle_dir.is_dir():
+            print(f"WARNING: Cannot find bundle directory: {bundle_dir}")
             continue
-        print(f"Restoring {filename}...")
-        backup_path.replace(bundle_path)
+
+        for filename in BUNDLES:
+            bundle_path = bundle_dir / filename
+            backup_path = bundle_path.with_suffix(bundle_path.suffix + BACKUP_SUFFIX)
+            if not backup_path.exists():
+                print(f"No backup found for {filename}, skipping.")
+                continue
+            print(f"Restoring {filename}...")
+            backup_path.replace(bundle_path)
 
     print("\nDone. Original bundles restored.")
 
