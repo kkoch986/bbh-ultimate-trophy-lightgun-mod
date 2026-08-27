@@ -222,30 +222,82 @@ def patch_reticle_bundle(bundle_path: Path):
     env, by_path = load_bundle(bundle_path)
     modified = False
 
+    reticle_names = {"CursorWindow", "TargetCursorWindow", "Cursor", "Reticle",
+                     "gunreticle", "ReticleHit", "TargetCursor"}
+
+    # Phase 1: Disable reticle GameObjects and their MonoBehaviours
     for obj in env.objects:
         if obj.type.name != "GameObject":
             continue
         name = get_name(obj)
-        if name != "CursorWindow":
+        if not name:
             continue
+        name_lower = name.lower()
+        if name_lower in {n.lower() for n in reticle_names}:
+            if disable_gameobject(obj, by_path):
+                print(f"  Disabled reticle GO '{name}'")
+                modified = True
 
-        if disable_gameobject(obj, by_path):
-            print(f"  Disabled GameObject 'CursorWindow'")
-            modified = True
-
-        go_data = obj.read()
-        for comp_pair in go_data.m_Component:
-            if comp_pair.component.type.name == "MonoBehaviour":
-                mb_obj = by_path.get(comp_pair.component.path_id)
-                if not mb_obj:
+            go_data = obj.read()
+            for comp_pair in go_data.m_Component:
+                ctype = comp_pair.component.type.name
+                comp_obj = by_path.get(comp_pair.component.path_id)
+                if not comp_obj:
                     continue
-                mb = mb_obj.read()
-                if mb.m_Enabled:
-                    mb.m_Enabled = 0
-                    mb_obj.save_typetree(mb)
-                    print(f"  Disabled CursorWindow MonoBehaviour")
-                    modified = True
-        break
+
+                # Disable MonoBehaviours
+                if ctype == "MonoBehaviour":
+                    mb = comp_obj.read()
+                    if mb.m_Enabled:
+                        mb.m_Enabled = 0
+                        comp_obj.save_typetree(mb)
+                        print(f"  Disabled MonoBehaviour on '{name}'")
+                        modified = True
+
+                # Disable Canvas components (prevents rendering even if GO reactivated)
+                elif ctype == "Canvas":
+                    canvas = comp_obj.read()
+                    if canvas.m_Enabled:
+                        canvas.m_Enabled = 0
+                        comp_obj.save_typetree(canvas)
+                        print(f"  Disabled Canvas on '{name}'")
+                        modified = True
+
+                # Disable Image components (crosshair sprite)
+                elif ctype in ("Image", "RawImage"):
+                    img = comp_obj.read()
+                    if img.m_Enabled:
+                        img.m_Enabled = 0
+                        comp_obj.save_typetree(img)
+                        print(f"  Disabled Image on '{name}'")
+                        modified = True
+
+    # Phase 2: Also disable Canvas/Image on children of reticle GOs
+    # (TargetCursorWindow -> Canvas -> Image hierarchy)
+    for obj in env.objects:
+        if obj.type.name != "GameObject":
+            continue
+        name = get_name(obj)
+        if not name:
+            continue
+        name_lower = name.lower()
+        if name_lower not in {n.lower() for n in reticle_names}:
+            continue
+        for child in go_children(obj, by_path):
+            child_data = child.read()
+            for comp_pair in child_data.m_Component:
+                ctype = comp_pair.component.type.name
+                comp_obj = by_path.get(comp_pair.component.path_id)
+                if not comp_obj:
+                    continue
+                if ctype in ("Canvas", "Image", "RawImage", "GraphicRaycaster"):
+                    comp = comp_obj.read()
+                    if comp.m_Enabled:
+                        comp.m_Enabled = 0
+                        comp_obj.save_typetree(comp)
+                        child_name = get_name(child)
+                        print(f"  Disabled {ctype} on child '{child_name}'")
+                        modified = True
 
     if not modified:
         print("  Nothing to change.")
