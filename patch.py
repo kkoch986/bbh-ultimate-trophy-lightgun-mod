@@ -142,7 +142,19 @@ def patch_weapon_bundle(bundle_path: Path):
 
     renderer_types = {"MeshRenderer", "SkinnedMeshRenderer", "SpriteRenderer"}
 
-    # Phase 1: Find all weapon-related GameObjects by name pattern
+    # Phase 1: Identify GOs that have MonoBehaviours (logic controllers)
+    logic_go_ids = set()
+    for obj in env.objects:
+        if obj.type.name != "GameObject":
+            continue
+        go_data = obj.read()
+        for comp_pair in go_data.m_Component:
+            if comp_pair.component.type.name == "MonoBehaviour":
+                logic_go_ids.add(obj.path_id)
+                break
+
+    # Phase 2: Disable renderers on ALL weapon-related GOs
+    # (but never disable the GO itself if it has a MonoBehaviour)
     weapon_gos = []
     for obj in env.objects:
         if obj.type.name != "GameObject":
@@ -155,14 +167,18 @@ def patch_weapon_bundle(bundle_path: Path):
             weapon_gos.append((obj, name))
 
     print(f"  Found {len(weapon_gos)} weapon-related GameObject(s)")
+    print(f"  {len(logic_go_ids)} GO(s) have MonoBehaviours (keeping active)")
 
-    # Phase 2: Disable each weapon GO and all renderers under it
     for go_obj, name in weapon_gos:
-        if disable_gameobject(go_obj, by_path):
-            print(f"  Disabled '{name}' (path_id={go_obj.path_id})")
-            modified = True
+        is_logic = go_obj.path_id in logic_go_ids
 
-        # Disable renderers on this GO and all children
+        # Only disable non-logic GOs
+        if not is_logic:
+            if disable_gameobject(go_obj, by_path):
+                print(f"  Disabled visual GO '{name}'")
+                modified = True
+
+        # Always disable renderers on this GO and children
         for child in [go_obj, *go_children(go_obj, by_path)]:
             child_data = child.read()
             for comp_pair in child_data.m_Component:
@@ -179,29 +195,26 @@ def patch_weapon_bundle(bundle_path: Path):
                         print(f"  Disabled renderer on '{child_name}' ({comp_type})")
                         modified = True
 
-    # Phase 3: Also disable any remaining MeshRenderer/SkinnedMeshRenderer
-    # whose parent GO name matches weapon patterns (catches nested parts)
+    # Phase 3: Also disable any renderer whose owning GO name matches
     for obj in env.objects:
         if obj.type.name not in renderer_types:
             continue
         rend = obj.read()
         if not rend.m_Enabled:
             continue
-        # Walk up to find the owning GO
-        go_name = ""
         try:
             go_ref = getattr(rend, "m_GameObject", None)
             if go_ref and go_ref.path_id:
                 go_obj = by_path.get(go_ref.path_id)
                 if go_obj and go_obj.type.name == "GameObject":
                     go_name = get_name(go_obj).lower()
+                    if go_name in WEAPON_NAME_PATTERNS or go_name in WEAPON_ROOTS:
+                        rend.m_Enabled = 0
+                        obj.save_typetree(rend)
+                        print(f"  Disabled orphan renderer on GO '{go_name}'")
+                        modified = True
         except Exception:
             pass
-        if go_name in WEAPON_NAME_PATTERNS or go_name in WEAPON_ROOTS:
-            rend.m_Enabled = 0
-            obj.save_typetree(rend)
-            print(f"  Disabled orphan renderer on GO '{go_name}'")
-            modified = True
 
     if not modified:
         print("  Nothing to change.")
@@ -225,55 +238,10 @@ def patch_reticle_bundle(bundle_path: Path):
     reticle_names = {"CursorWindow", "TargetCursorWindow", "Cursor", "Reticle",
                      "gunreticle", "ReticleHit", "TargetCursor"}
 
-    # Phase 1: Disable reticle GameObjects and their MonoBehaviours
-    for obj in env.objects:
-        if obj.type.name != "GameObject":
-            continue
-        name = get_name(obj)
-        if not name:
-            continue
-        name_lower = name.lower()
-        if name_lower in {n.lower() for n in reticle_names}:
-            if disable_gameobject(obj, by_path):
-                print(f"  Disabled reticle GO '{name}'")
-                modified = True
+    # Only disable VISUAL components (Canvas, Image, GraphicRaycaster)
+    # Never disable GOs or MonoBehaviours — they handle input logic
+    visual_types = {"Canvas", "Image", "RawImage", "GraphicRaycaster"}
 
-            go_data = obj.read()
-            for comp_pair in go_data.m_Component:
-                ctype = comp_pair.component.type.name
-                comp_obj = by_path.get(comp_pair.component.path_id)
-                if not comp_obj:
-                    continue
-
-                # Disable MonoBehaviours
-                if ctype == "MonoBehaviour":
-                    mb = comp_obj.read()
-                    if mb.m_Enabled:
-                        mb.m_Enabled = 0
-                        comp_obj.save_typetree(mb)
-                        print(f"  Disabled MonoBehaviour on '{name}'")
-                        modified = True
-
-                # Disable Canvas components (prevents rendering even if GO reactivated)
-                elif ctype == "Canvas":
-                    canvas = comp_obj.read()
-                    if canvas.m_Enabled:
-                        canvas.m_Enabled = 0
-                        comp_obj.save_typetree(canvas)
-                        print(f"  Disabled Canvas on '{name}'")
-                        modified = True
-
-                # Disable Image components (crosshair sprite)
-                elif ctype in ("Image", "RawImage"):
-                    img = comp_obj.read()
-                    if img.m_Enabled:
-                        img.m_Enabled = 0
-                        comp_obj.save_typetree(img)
-                        print(f"  Disabled Image on '{name}'")
-                        modified = True
-
-    # Phase 2: Also disable Canvas/Image on children of reticle GOs
-    # (TargetCursorWindow -> Canvas -> Image hierarchy)
     for obj in env.objects:
         if obj.type.name != "GameObject":
             continue
@@ -283,14 +251,31 @@ def patch_reticle_bundle(bundle_path: Path):
         name_lower = name.lower()
         if name_lower not in {n.lower() for n in reticle_names}:
             continue
+
+        # Disable visual components on the reticle GO itself
+        go_data = obj.read()
+        for comp_pair in go_data.m_Component:
+            ctype = comp_pair.component.type.name
+            if ctype in visual_types:
+                comp_obj = by_path.get(comp_pair.component.path_id)
+                if not comp_obj:
+                    continue
+                comp = comp_obj.read()
+                if comp.m_Enabled:
+                    comp.m_Enabled = 0
+                    comp_obj.save_typetree(comp)
+                    print(f"  Disabled {ctype} on '{name}'")
+                    modified = True
+
+        # Disable visual components on children (Canvas -> Image hierarchy)
         for child in go_children(obj, by_path):
             child_data = child.read()
             for comp_pair in child_data.m_Component:
                 ctype = comp_pair.component.type.name
-                comp_obj = by_path.get(comp_pair.component.path_id)
-                if not comp_obj:
-                    continue
-                if ctype in ("Canvas", "Image", "RawImage", "GraphicRaycaster"):
+                if ctype in visual_types:
+                    comp_obj = by_path.get(comp_pair.component.path_id)
+                    if not comp_obj:
+                        continue
                     comp = comp_obj.read()
                     if comp.m_Enabled:
                         comp.m_Enabled = 0
